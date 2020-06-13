@@ -1,87 +1,158 @@
-__precompile__()
-
 module MixedModels
 
-using ArgCheck, BlockArrays, CategoricalArrays, Compat, DataArrays, DataFrames
-using Distributions, GLM, NLopt, Showoff, StatsBase
+using BlockArrays
+using BlockDiagonals
+using Distributions
+using Feather
+using GLM
+using LinearAlgebra
+using NamedArrays
+using NLopt
+using Random
+using Pkg.Artifacts
+using PooledArrays
+using ProgressMeter
+using Showoff
+using SparseArrays
+using StaticArrays
+using Statistics
+using StatsBase
+using StatsModels
+using Tables
+
+using LinearAlgebra: BlasFloat, BlasReal, HermOrSym, PosDefException, copytri!
+using Base: Ryu
+using GLM: Link, canonicallink
+
 using StatsFuns: log2π
-using NamedArrays: NamedArray, setnames!
-using Base.LinAlg: BlasFloat, BlasReal, HermOrSym, PosDefException, checksquare, copytri!
 
-import Base: cor, cond, convert, eltype, full, logdet, std
-import Base.LinAlg: A_mul_B!, A_mul_Bc!, Ac_mul_B!, A_ldiv_B!, Ac_ldiv_B!, A_rdiv_B!, A_rdiv_Bc!
-import DataFrames: @formula
-import Distributions: Bernoulli, Binomial, InverseGaussian, Poisson, Gamma
-import GLM: LogitLink, LogLink, InverseLink
+import Base: *
+import GLM: dispersion, dispersion_parameter
 import NLopt: Opt
-import StatsBase: coef, coeftable, dof, deviance, fit!, fitted, loglikelihood,
-    model_response, nobs, vcov
+import StatsBase: fit, fit!
 
-export
-       @formula,
+export @formula,
        Bernoulli,
        Binomial,
-       FactorReTerm,
+       Block,
+       BlockDescription,
+       BlockedSparse,
+       DummyCoding,
+       EffectsCoding,
        Gamma,
-       LogitLink,
-       LogLink,
+       GeneralizedLinearMixedModel,
+       HelmertCoding,
        InverseGaussian,
        InverseLink,
-       GeneralizedLinearMixedModel,
        LinearMixedModel,
-       MatrixTerm,
+       LogitLink,
+       LogLink,
        MixedModel,
+       MixedModelBootstrap,
+       Normal,
        OptSummary,
        Poisson,
+       RaggedArray,
+       RandomEffectsTerm,
+       ReMat,
+       SqrtLink,
+       UniformBlockDiagonal,
        VarCorr,
-
-       bootstrap,
-       bootstrap!,
+       
+       aic,
+       aicc,
+       bic,
        coef,
+       coefnames,
        coeftable,
        cond,
        condVar,
-       dof,
+       describeblocks,
        deviance,
+       dispersion,
+       dispersion_parameter,
+       dof,
+       dof_residual,
+       fit,
        fit!,
        fitted,
-       fixef,      # extract the fixed-effects parameter estimates
-       getΛ,
-       getθ,
-       glmm,       # define a GeneralizedLinearMixedModel
-       LaplaceDeviance, # Laplace approximation to GLMM deviance
-       lmm,        # create a LinearMixedModel from a formula/data specification
+       fixef,
+       fixefnames,
+       fulldummy,
+       fnames,
+       GHnorm,
+       issingular,
+       leverage,
+       logdet,
        loglikelihood,
-       lowerbd,    # lower bounds on the covariance parameters
-       model_response,
+       lowerbd,
        nobs,
-       objective,  # the objective function in fitting a model
-       pwrss,      # penalized, weighted residual sum-of-squares
-       pirls!,     # use Penalized Iteratively Reweighted Least Squares to obtain conditional modes of random effects
-       ranef,      # extract the conditional modes of the random effects
-       refit!,     # install a response and refit the model
-       remat,      # factory for construction of ReMat objects
-       sdest,      # the estimate of the standard deviation of the per-observation noise
+       objective,
+       parametricbootstrap,
+       pirls!,
+       predict,
+       pwrss,
+       ranef,
+       rank,
+       refit!,
+       replicate,
+       residuals,
+       response,
+       shortestcovint,
+       sdest,
        setθ!,
-       simulate!,  # simulate a new response in place
+       simulate!,
+       sparse,
+       statscholesky,
        std,
-       updateL!,   # update the lower-triangular, blocked matrix L to a new θ
-       varest,     # estimate of the residual variance
-       vcov
+       stderror,
+       updateL!,
+       varest,
+       vcov,
+       zerocorr,
+       zerocorr!
 
 import Base: ==, *
 
-include("types.jl")
-include("modelterms.jl")
+"""
+    MixedModel
+
+Abstract type for mixed models.  MixedModels.jl implements two subtypes:
+`LinearMixedModel` and `GeneralizedLinearMixedModel`.  See the documentation for
+each for more details.
+
+This type is primarily used for dispatch in `fit`.  Without a distribution and
+link function specified, a `LinearMixedModel` will be fit.  When a
+distribution/link function is provided, a `GeneralizedLinearModel` is fit,
+unless that distribution is `Normal` and the link is `IdentityLink`, in which
+case the resulting GLMM would be equivalent to a `LinearMixedModel` anyway and
+so the simpler, equivalent `LinearMixedModel` will be fit instead.
+"""
+abstract type MixedModel{T} <: StatsModels.RegressionModel end # model with fixed and random effects
+
+function __init__()
+    global TestData = artifact"TestData"
+end
+
+include("utilities.jl")
+include("arraytypes.jl")
+include("varcorr.jl")
+include("femat.jl")
+include("remat.jl")
+include("optsummary.jl")
+include("randomeffectsterm.jl")
+include("linearmixedmodel.jl")
+include("gausshermite.jl")
+include("generalizedlinearmixedmodel.jl")
+include("mixedmodel.jl")
+include("likelihoodratiotest.jl")
+include("linalg/statschol.jl")
 include("linalg/cholUnblocked.jl")
 include("linalg/rankUpdate.jl")
-include("linalg/scaleInflate.jl")
-include("linalg/lambdaprods.jl")
 include("linalg/logdet.jl")
 include("linalg.jl")
-include("pls.jl")
 include("simulate.jl")
-include("PIRLS.jl")
-include("mixedmodel.jl")
+include("bootstrap.jl")
+include("blockdescription.jl")
 
 end # module

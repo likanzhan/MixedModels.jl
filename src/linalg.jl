@@ -1,19 +1,19 @@
-function αβA_mul_Bc!(α::T, A::StridedMatrix{T}, B::StridedMatrix{T},
-                     β::T, C::StridedMatrix{T}) where T <: BlasFloat
-    BLAS.gemm!('N', 'C', α, A, B, β, C)
-end
-
-function αβA_mul_Bc!(α::T, A::SparseMatrixCSC{T}, B::SparseMatrixCSC{T},
-                     β::T, C::Matrix{T}) where T <: Number
-    @argcheck B.m == size(C, 2) && A.m == size(C, 1) && A.n == B.n  DimensionMismatch
+function LinearAlgebra.mul!(
+    C::Matrix{T},
+    blkA::BlockedSparse{T},
+    adjB::Adjoint{T,<:BlockedSparse{T}},
+    α::Number,
+    β::Number,
+) where {T}
+    A = blkA.cscmat
+    B = adjB.parent.cscmat
+    B.m == size(C, 2) && A.m == size(C, 1) && A.n == B.n || throw(DimensionMismatch(""))
     anz = nonzeros(A)
     arv = rowvals(A)
     bnz = nonzeros(B)
     brv = rowvals(B)
-    if β ≠ one(T)
-        β ≠ zero(T) ? scale!(C, β) : fill!(C, β)
-    end
-    for j = 1:A.n
+    isone(β) || rmul!(C, β)
+    @inbounds for j = 1:A.n
         for ib in nzrange(B, j)
             αbnz = α * bnz[ib]
             jj = brv[ib]
@@ -25,150 +25,68 @@ function αβA_mul_Bc!(α::T, A::SparseMatrixCSC{T}, B::SparseMatrixCSC{T},
     C
 end
 
-function αβA_mul_Bc!(α::T, A::SparseMatrixCSC{T}, B::SparseMatrixCSC{T},
-                     β::T, C::SparseMatrixCSC{T}) where T <: Number
-    @argcheck B.m == C.n && A.m == C.m && A.n == B.n  DimensionMismatch
-    anz = nonzeros(A)
-    arv = rowvals(A)
-    bnz = nonzeros(B)
-    brv = rowvals(B)
-    cnz = nonzeros(C)
-    crv = rowvals(C)
-    if β ≠ one(T)
-        iszero(β) ? fill!(cnz, β) : scale!(cnz, β)
+LinearAlgebra.mul!(
+    C::StridedVecOrMat{T},
+    A::StridedVecOrMat{T},
+    adjB::Adjoint{T,<:BlockedSparse{T}},
+    α::Number,
+    β::Number,
+) where {T} = mul!(C, A, adjB.parent.cscmat', α, β)
+
+LinearAlgebra.mul!(
+    C::StridedVector{T},
+    adjA::Adjoint{T,<:BlockedSparse{T}},
+    B::StridedVector{T},
+    α::Number,
+    β::Number,
+) where {T} = mul!(C, adjA.parent.cscmat', B, α, β)
+
+function LinearAlgebra.ldiv!(
+    adjA::Adjoint{T,<:LowerTriangular{T,UniformBlockDiagonal{T}}},
+    B::StridedVector{T},
+) where {T}
+    A = adjA.parent
+    length(B) == size(A, 2) || throw(DimensionMismatch(""))
+    Adat = A.data.data
+    m, n, k = size(Adat)
+    bb = reshape(B, (n, k))
+    for j in axes(Adat, 3)
+        ldiv!(adjoint(LowerTriangular(view(Adat, :, :, j))), view(bb, :, j))
     end
-    for j = 1:A.n
-        for ib in nzrange(B, j)
-            αbnz = α * bnz[ib]
-            jj = brv[ib]
-            for ia in nzrange(A, j)
-                crng = nzrange(C, jj)
-                ind = findfirst(crv[crng], arv[ia])
-                if iszero(ind)
-                    throw(ArgumentError("A*B' has nonzero positions not in C"))
-                end
-                cnz[crng[ind]] += anz[ia] * αbnz
-            end
-        end
-    end
-    C
+    B
 end
 
-function αβA_mul_Bc!(α::T, A::StridedVecOrMat{T}, B::SparseMatrixCSC{T}, β::T,
-                     C::StridedVecOrMat{T}) where T <: Number
+function LinearAlgebra.rdiv!(
+    A::Matrix{T},
+    adjB::Adjoint{T,<:LowerTriangular{T,UniformBlockDiagonal{T}}},
+) where {T}
     m, n = size(A)
-    p, q = size(B)
-    r, s = size(C)
-    if r ≠ m || s ≠ p || n ≠ q
-        throw(DimensionMismatch("size(C,1) ≠ size(A,1) or size(C,2) ≠ size(B,1) or size(A,2) ≠ size(B,2)"))
-    end
-    if β ≠ one(T)
-        iszero(β) ? fill!(C, β) : scale!(C, β)
-    end
-    nz = nonzeros(B)
-    rv = rowvals(B)
-    @inbounds for j in 1:q, k in nzrange(B, j)
-        rvk = rv[k]
-        anzk = α * nz[k]
-        for jj in 1:r  # use .= fusing in v0.6.0 and later
-            C[jj, rvk] += A[jj, j] * anzk
-        end
-    end
-    C
-end
-
-αβAc_mul_B!(α::T, A::StridedMatrix{T}, B::StridedVector{T}, β::T,
-            C::StridedVector{T}) where {T<:BlasFloat} = BLAS.gemv!('C', α, A, B, β, C)
-
-αβAc_mul_B!(α::T, A::SparseMatrixCSC{T}, B::StridedVector{T}, β::T,
-            C::StridedVector{T}) where T = Ac_mul_B!(α, A, B, β, C)
-
-function Ac_ldiv_B!(A::Diagonal{LowerTriangular{T,Matrix{T}}}, B::StridedVector{T}) where T <: AbstractFloat
-    offset = 0
-    for a in A.diag
-        k = size(a, 1)
-        Ac_ldiv_B!(a, view(B, (1:k) + offset))
-        offset += k
-    end
-    B
-end
-
-if VERSION < v"0.7.0-DEV.586"
-    Ac_ldiv_B!(D::Diagonal{T}, B::StridedVecOrMat{T}) where {T} = A_ldiv_B!(D, B)
-
-    function A_rdiv_B!(A::StridedMatrix{T}, D::Diagonal{T}) where T
-        scale!(A, inv.(D.diag))
-        A
-    end
-
-    A_rdiv_Bc!(A::StridedMatrix{T}, D::Diagonal{T}) where {T} = A_rdiv_B!(A, D)
-
-    function A_rdiv_Bc!(A::SparseMatrixCSC{T}, D::Diagonal{T}) where T
-        if size(D, 2) ≠ size(A, 2)
-            throw(DimensionMismatch("size(A,2)=$(size(A,2)) should be size(D, 1)=$(size(D,1))"))
-        end
-        dd = D.diag
-        nonz = nonzeros(A)
-        for j in 1:A.n
-            ddj = dd[j]
-            for k in nzrange(A, j)
-                nonz[k] /= ddj
-            end
-        end
-        A
-    end
-end
-
-function A_rdiv_Bc!(A::Matrix, B::Diagonal{LowerTriangular{T,Matrix{T}}}) where T <: AbstractFloat
-    offset = 0
-    for d in B.diag
-        k = size(d, 1)
-        ## FIXME call BLAS.trsm directly
-        A_rdiv_Bc!(view(A, :, (1:k) + offset), d)
-        offset += k
+    Bd = adjB.parent.data
+    Bdd = Bd.data
+    r, s, blk = size(Bdd)
+    n == size(Bd, 1) && r == s || throw(DimensionMismatch())
+    for b = axes(Bd.data, 3)
+        coloffset = (b - 1) * s
+        rdiv!(view(A, :, coloffset+1:coloffset+s), adjoint(LowerTriangular(view(Bdd, :, :, b))))
     end
     A
 end
 
-function A_rdiv_Bc!(A::SparseMatrixCSC{T}, B::Diagonal{LowerTriangular{T,Matrix{T}}}) where T
-    nz = nonzeros(A)
-    offset = 0
-    for d in B.diag
-        if (k = size(d, 1)) == 1
-            d1 = d[1]
-            offset += 1
-            for k in nzrange(A, offset)
-                nz[k] /= d1
-            end
-        else
-            nzr = nzrange(A, offset + 1).start : nzrange(A, offset + k).stop
-            q = div(length(nzr), k)
-            ## FIXME Still allocating 1.4 GB.  Call BLAS.trsm directly
-            A_rdiv_Bc!(unsafe_wrap(Array, pointer(nz, nzr[1]), (q, k)), d)
-            offset += k
-        end
+function LinearAlgebra.rdiv!(
+    A::BlockedSparse{T,S,P},
+    B::Adjoint{T,<:LowerTriangular{T,UniformBlockDiagonal{T}}},
+) where {T,S,P}
+    Bpd = B.parent.data
+    Bdat = Bpd.data
+    j, k, l = size(Bdat)
+    cbpt = A.colblkptr
+    nzv = A.cscmat.nzval
+    P == j == k && length(cbpt) == (l + 1) || throw(DimensionMismatch(""))
+    for j in axes(Bdat, 3)
+        rdiv!(
+            reshape(view(nzv,cbpt[j]:(cbpt[j+1]-1)),:,P),
+            adjoint(LowerTriangular(view(Bdat,:,:,j)))
+            )
     end
     A
 end
-
-function full(A::Diagonal{LowerTriangular{T,Matrix{T}}}) where T
-    D = diag(A)
-    sz = size.(D, 2)
-    n = sum(sz)
-    B = zeros(n, n)
-    offset = 0
-    for (d,s) in zip(D, sz)
-        for j in 1:s, i in j:s
-            B[offset + i, offset + j] = d[i,j]
-        end
-        offset += s
-    end
-    B
-end
-
-function rowlengths(A::FactorReTerm)
-    ld = A.Λ
-    [norm(view(ld, i, 1:i)) for i in 1:size(ld, 1)]
-end
-
-rowlengths(A::MatrixTerm{T}) where {T} = T[]

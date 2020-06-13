@@ -1,8 +1,14 @@
-using DataArrays, DataFrames, MixedModels, RData, Base.Test
+using MixedModels
 
-const dat = convert(Dict{Symbol,Any},load(joinpath(dirname(@__FILE__), "dat.rda")))
-
+include("utilities.jl")
+include("statschol.jl")
+include("UniformBlockDiagonal.jl")
+include("linalg.jl")
 include("matrixterm.jl")
 include("FactorReTerm.jl")
 include("pls.jl")
 include("pirls.jl")
+include("gausshermite.jl")
+include("fit.jl")
+include("missing.jl")
+include("likelihoodratiotest.jl")
